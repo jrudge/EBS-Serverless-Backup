@@ -1,0 +1,211 @@
+{
+    "AWSTemplateFormatVersion" : "2010-09-09",
+    "Description"              : "AWS CloudFormation Serverless EBS Maintenance",
+    "Parameters"               : {
+        "pAlertAddress1" : {
+            "Type" : "String",
+            "Description" : "SNS Topic to Send Alerts to",
+            "Default"     : "arn:aws:sns:"
+        }
+    },
+    "Resources"                : {
+        "EbsBackupRole" : {
+            "Type" : "AWS::IAM::Role",
+            "Properties" : {
+                "AssumeRolePolicyDocument" : {
+                    "Version" : "2012-10-17",
+                    "Statement" : [
+                        {
+                            "Effect" : "Allow",
+                            "Principal" : {
+                                "Service" : [
+                                    "lambda.amazonaws.com"
+                                ]
+                            },
+                            "Action"    : [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path"                     : "/"
+            }
+        },
+        "EbsBackupPolicy" : {
+            "DependsOn" : [
+                "EbsBackupRole"
+            ],
+            "Type"      : "AWS::IAM::Policy",
+            "Properties" : {
+                "PolicyName" : "ebs-backup-role",
+                "Roles"      : [
+                    {
+                        "Ref" : "EbsBackupRole"
+                    }
+                ],
+                "PolicyDocument" : {
+                    "Version" : "2012-10-17",
+                    "Statement" : [
+                        {
+                            "Effect" : "Allow",
+                            "Action" : [
+                                "logs:*"
+                            ],
+                            "Resource" : [
+                                "arn:aws:logs:*:*:*"
+                            ]
+                        },
+                        {
+                            "Effect" : "Allow",
+                            "Action" : [
+                                "ec2:Describe*",
+                                "ec2:CreateSnapshot",
+                                "ec2:DeleteSnapshot",
+                                "ec2:CreateTags",
+                                "ec2:ModifySnapshotAttribute",
+                                "ec2:ResetSnapshotAttribute"
+                            ],
+                            "Resource" : [
+                                "*"
+                            ]
+                        }
+                    ]
+                }
+            }
+        },
+        "EbsBackupFunction" : {
+            "Type" : "AWS::Lambda::Function",
+            "DependsOn" : [
+                "EbsBackupRole",
+                "EbsBackupPolicy"
+            ],
+            "Properties" : {
+                "Code" : {
+                    "S3Bucket" : "jr-ebsbackup-scripts",
+                    "S3Key"    : "ebs-backup-lambda.zip"
+                },
+                "Role" : {
+                    "Fn::GetAtt" : [
+                        "EbsBackupRole",
+                        "Arn"
+                    ]
+                },
+                "Timeout" : 60,
+                "Handler" : "lambda_function.lambda_handler",
+                "Runtime" : "python2.7",
+                "MemorySize" : 128
+            }
+        },
+        "EbsBackupJanitorFunction" : {
+            "Type" : "AWS::Lambda::Function",
+            "DependsOn" : [
+                "EbsBackupRole",
+                "EbsBackupPolicy"
+            ],
+            "Properties" : {
+                "Code" : {
+                    "S3Bucket" : "jr-ebsbackup-scripts",
+                    "S3Key"    : "ebs-backup-janitor-lambda.zip"
+                },
+                "Role" : {
+                    "Fn::GetAtt" : [
+                        "EbsBackupRole",
+                        "Arn"
+                    ]
+                },
+                "Timeout" : 60,
+                "Handler" : "lambda_function.lambda_handler",
+                "Runtime" : "python2.7",
+                "MemorySize" : 128
+            }
+        },
+        "EbsBackupAlarm"           : {
+            "Type" : "AWS::CloudWatch::Alarm",
+            "Properties" : {
+                "AlarmName" : {
+                    "Fn::Join" : [
+                        "",
+                        [
+                            "EBS Backup Lambda Function Failure ",
+                            {
+                                "Ref" : "EbsBackupFunction"
+                            }
+                        ]
+                    ]
+                },
+                "AlarmDescription" : {
+                    "Fn::Join" : [
+                        "",
+                        [
+                            "EBS Backup function is generating errors. Backups may be failing "
+                        ]
+                    ]
+                },
+                "MetricName"       : "Errors",
+                "Namespace"        : "AWS/Lambda",
+                "Statistic"        : "Sum",
+                "Threshold"        : "1",
+				"Period"           : "300",
+				"EvaluationPeriods": "1",
+                "AlarmActions"     : [
+                    {
+                        "Ref" : "pAlertAddress1"
+                    }
+                ],
+                "Dimensions"       : [
+                    {
+                        "Name" : "FunctionName",
+                        "Value" : {
+                            "Ref" : "EbsBackupFunction"
+                        }
+                    }
+                ],
+                "ComparisonOperator" : "GreaterThanOrEqualToThreshold"
+            }
+        },
+        "EbsJanitorAlarm"          : {
+            "Type" : "AWS::CloudWatch::Alarm",
+            "Properties" : {
+                "AlarmName" : {
+                    "Fn::Join" : [
+                        "",
+                        [
+                            "EBS Backup Lambda Function Failure ",
+                            {
+                                "Ref" : "EbsBackupJanitorFunction"
+                            }
+                        ]
+                    ]
+                },
+                "AlarmDescription" : {
+                    "Fn::Join" : [
+                        "",
+                        [
+                            "EBS Backup function is generating errors. Backups may be failing "
+                        ]
+                    ]
+                },
+                "MetricName"       : "Errors",
+                "Namespace"        : "AWS/Lambda",
+                "Statistic"        : "Sum",
+                "Threshold"        : "1",
+				"Period"           : "300",
+				"EvaluationPeriods": "1",
+                "AlarmActions"     : [
+                    {
+                        "Ref" : "pAlertAddress1"
+                    }
+                ],
+                "Dimensions"       : [
+                    {
+                        "Name" : "FunctionName",
+                        "Value" : {
+                            "Ref" : "EbsBackupJanitorFunction"
+                        }
+                    }
+                ],
+                "ComparisonOperator" : "GreaterThanOrEqualToThreshold"
+            }
+        }
+    }
+}
